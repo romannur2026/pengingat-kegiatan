@@ -82,20 +82,9 @@
   <p class="eyebrow">PENGINGAT · H-5 H-3 H-1 HARI-H</p>
   <h1>Kegiatan &amp; Rapat</h1>
   <p class="sub">Notifikasi otomatis ke WhatsApp pribadi</p>
-  <button class="config-toggle" id="configToggle">Set</button>
 </header>
 
 <main>
-  <div class="config-panel" id="configPanel">
-    <label>URL Web App (Google Apps Script)</label>
-    <input type="text" id="appsScriptUrl" placeholder="https://script.google.com/macros/s/xxx/exec" />
-    <div class="hint">Tempel URL deployment Apps Script kamu.</div>
-    <label style="display:block;margin-top:12px;">Google Gemini API Key</label>
-    <input type="text" id="geminiApiKey" placeholder="AIzaSy..." />
-    <div class="hint">Buat gratis di aistudio.google.com &gt; Get API Key. Dipakai untuk Scan Foto &amp; Tempel Teks.</div>
-    <button class="btn-secondary" id="saveConfigBtn">Simpan</button>
-  </div>
-
   <div class="tabs">
     <button class="tab-btn active" data-tab="list">Daftar</button>
     <button class="tab-btn" data-tab="add">Tambah</button>
@@ -192,44 +181,16 @@
 <div class="toast" id="toast"></div>
 
 <script>
-// URL Apps Script diisi manual lewat pengaturan (ikon gear), tersimpan di device ini.
-let SELF_URL = '';
-let CONFIG = { geminiApiKey: '', appsScriptUrl: '' };
+// URL Apps Script di-hardcode langsung -- bukan rahasia sensitif (cuma endpoint
+// buat baca/tulis Sheet kamu sendiri), jadi aman ditulis di sini biar otomatis
+// tanpa perlu diisi manual tiap device. Ganti nilai ini kalau kamu bikin
+// "New deployment" baru (URL akan berubah); kalau cuma "New version", tetap sama.
+const SELF_URL = 'https://script.google.com/macros/s/AKfycbyr3ZzuamAR3q1kX7o6A1VaovfNGDOo6fJ2H0lyL-3Zw0nUd81OLhL-fyvpbsnZ6tzu/exec';
 let EVENTS = [];
 let addType = 'offline';
 let scanType = 'offline';
 let pasteType = 'offline';
 let scanFileData = null;
-
-// ---------- storage (localStorage per device/browser) ----------
-async function loadConfig(){
-  try{
-    const v = localStorage.getItem('config:geminiApiKey');
-    if(v) CONFIG.geminiApiKey = v;
-    const u = localStorage.getItem('config:appsScriptUrl');
-    if(u) { CONFIG.appsScriptUrl = u; SELF_URL = u; }
-  }catch(e){
-    console.warn('localStorage tidak bisa diakses:', e);
-  }
-  document.getElementById('geminiApiKey').value = CONFIG.geminiApiKey || '';
-  document.getElementById('appsScriptUrl').value = CONFIG.appsScriptUrl || '';
-}
-function saveConfig(){
-  const val = document.getElementById('geminiApiKey').value.trim();
-  const urlVal = document.getElementById('appsScriptUrl').value.trim();
-  CONFIG.geminiApiKey = val;
-  CONFIG.appsScriptUrl = urlVal;
-  SELF_URL = urlVal;
-  try{
-    localStorage.setItem('config:geminiApiKey', val);
-    localStorage.setItem('config:appsScriptUrl', urlVal);
-    showToast('Konfigurasi disimpan di device ini');
-  }catch(e){
-    showToast('Dipakai untuk sesi ini saja (penyimpanan browser diblokir)');
-  }
-  document.getElementById('configPanel').classList.remove('open');
-  fetchEvents();
-}
 
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -256,7 +217,6 @@ async function apiList(){
   return withTimeout(p, 15000, 'memuat daftar');
 }
 async function apiCreate(data){
-  if(!SELF_URL) throw new Error('URL Apps Script belum diisi di pengaturan.');
   const p = fetch(SELF_URL, {
     method:'POST',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
@@ -300,10 +260,6 @@ function formatTanggal(dateStr){
 
 async function fetchEvents(){
   const container = document.getElementById('listContainer');
-  if(!SELF_URL){
-    container.innerHTML = '<div class="empty"><span class="bolt"></span>Isi dulu URL Apps Script di pengaturan (ikon gear di kanan atas).</div>';
-    return;
-  }
   container.innerHTML = '<div class="empty"><span class="bolt"></span>Memuat kegiatan...</div>';
   try{
     EVENTS = await apiList();
@@ -373,11 +329,6 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
   });
 });
 
-document.getElementById('configToggle').addEventListener('click', ()=>{
-  document.getElementById('configPanel').classList.toggle('open');
-});
-document.getElementById('saveConfigBtn').addEventListener('click', saveConfig);
-
 // ---------- add form ----------
 document.querySelectorAll('.type-toggle button[data-type]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
@@ -431,25 +382,14 @@ Balas HANYA dengan JSON valid persis struktur ini, tanpa teks lain, tanpa markdo
 Jika suatu field tidak ditemukan, isi dengan string kosong "". Jangan mengarang informasi.`;
 
 async function callGemini(parts){
-  if(!CONFIG.geminiApiKey){
-    throw new Error('Isi dulu Google Gemini API Key di pengaturan (ikon roda gigi)');
-  }
-  const model = 'gemini-2.5-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(CONFIG.geminiApiKey)}`;
-  const response = await fetch(url, {
+  const p = fetch(SELF_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts }],
-      generationConfig: { responseMimeType: 'application/json' }
-    })
-  });
-  const data = await response.json();
-  if(data.error) throw new Error(data.error.message || 'Gagal memanggil Gemini API');
-  const textOut = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if(!textOut) throw new Error('AI tidak mengembalikan hasil');
-  let clean = textOut.trim().replace(/^```json/i,'').replace(/^```/,'').replace(/```$/,'').trim();
-  return JSON.parse(clean);
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: 'extract', parts })
+  }).then(res => res.json());
+  const result = await withTimeout(p, 30000, 'membaca dengan AI');
+  if(!result.ok) throw new Error(result.error || 'Gagal membaca otomatis');
+  return result.data;
 }
 
 // ---------- Scan Foto/PDF ----------
@@ -594,11 +534,8 @@ async function saveFromForm(prefix, tipe, btn, formId, previewAreaId, statusId){
 
 // ---------- init ----------
 (async function init(){
-  try{ await loadConfig(); }catch(e){ console.warn('loadConfig gagal:', e); }
   fetchEvents();
 })();
 </script>
 </body>
 </html>
-
-
