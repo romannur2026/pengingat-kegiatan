@@ -17,7 +17,13 @@
   .eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:700;margin:0 0 4px;}
   h1{margin:0;font-size:22px;font-weight:800;letter-spacing:-0.02em;}
   .sub{margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.75);}
+  .config-toggle{position:absolute;top:18px;right:16px;background:rgba(255,255,255,0.15);border:none;color:#fff;width:40px;height:40px;border-radius:10px;font-size:16px;cursor:pointer;z-index:5;}
   main{padding:16px;max-width:560px;margin:0 auto;}
+  .config-panel{background:var(--surface);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px;border:1px solid var(--line);display:none;}
+  .config-panel.open{display:block;}
+  .config-panel label{font-size:12px;color:var(--muted);font-weight:600;}
+  .config-panel input{width:100%;margin-top:6px;}
+  .config-panel .hint{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;}
   input,select,textarea{font-family:inherit;font-size:14.5px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#fff;color:var(--ink);width:100%;}
   input:focus,select:focus,textarea:focus{outline:2px solid var(--brand);outline-offset:1px;}
   .tabs{display:flex;background:var(--surface);border-radius:12px;padding:4px;gap:3px;margin-bottom:16px;border:1px solid var(--line);overflow-x:auto;}
@@ -46,7 +52,7 @@
   .card-meta{font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.6;}
   .card-meta div{display:flex;gap:6px;}
   .card-meta b{color:var(--ink);font-weight:600;}
-  .card-actions{margin-top:10px;display:flex;gap:12px;}
+  .card-actions{margin-top:10px;display:flex;gap:8px;}
   .link-btn{font-size:12px;font-weight:700;border:none;background:none;color:var(--brand);cursor:pointer;padding:0;}
   .link-btn.danger{color:var(--danger);}
   .field{margin-bottom:12px;}
@@ -58,6 +64,7 @@
   .type-toggle button.active{background:var(--brand);color:#fff;border-color:var(--brand);}
   .btn-primary{width:100%;padding:13px;border:none;border-radius:12px;background:var(--brand);color:#fff;font-weight:800;font-size:14.5px;cursor:pointer;margin-top:4px;}
   .btn-primary:disabled{opacity:.5;}
+  .btn-secondary{width:100%;padding:11px;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--brand);font-weight:700;font-size:13.5px;cursor:pointer;margin-top:8px;}
   .dropzone{border:2px dashed var(--line);border-radius:var(--radius);padding:28px 16px;text-align:center;color:var(--muted);background:var(--surface);cursor:pointer;margin-bottom:14px;}
   .dropzone .bolt{font-size:26px;display:block;margin-bottom:6px;}
   #fileInput{display:none;}
@@ -109,6 +116,7 @@
       <div class="field"><label id="lokasiLabel">Lokasi</label><input type="text" id="f-lokasi" placeholder="Kantor UP3 Selaparang, Mataram" /></div>
       <div class="field"><label>Catatan (opsional)</label><textarea id="f-catatan" rows="2" placeholder="Bawa laporan bulanan"></textarea></div>
       <button type="submit" class="btn-primary" id="submitBtn">Simpan Kegiatan</button>
+      <button type="button" class="btn-secondary" id="cancelEditBtn" style="display:none;" onclick="cancelEdit()">Batal Edit</button>
     </form>
   </section>
 
@@ -174,6 +182,10 @@
 <div class="toast" id="toast"></div>
 
 <script>
+// URL Apps Script di-hardcode langsung -- bukan rahasia sensitif (cuma endpoint
+// buat baca/tulis Sheet kamu sendiri), jadi aman ditulis di sini biar otomatis
+// tanpa perlu diisi manual tiap device. Ganti nilai ini kalau kamu bikin
+// "New deployment" baru (URL akan berubah); kalau cuma "New version", tetap sama.
 const SELF_URL = 'https://script.google.com/macros/s/AKfycbyr3ZzuamAR3q1kX7o6A1VaovfNGDOo6fJ2H0lyL-3Zw0nUd81OLhL-fyvpbsnZ6tzu/exec';
 let EVENTS = [];
 let addType = 'offline';
@@ -188,6 +200,7 @@ function showToast(msg){
   setTimeout(()=>t.classList.remove('show'), 2200);
 }
 
+// ---------- backend calls (fetch ke SELF_URL yang disuntik server) ----------
 function withTimeout(promise, ms, label){
   return Promise.race([
     promise,
@@ -196,7 +209,6 @@ function withTimeout(promise, ms, label){
     )), ms))
   ]);
 }
-
 async function apiList(){
   const p = fetch(SELF_URL + '?action=list').then(async res => {
     const json = await res.json();
@@ -205,7 +217,6 @@ async function apiList(){
   });
   return withTimeout(p, 15000, 'memuat daftar');
 }
-
 async function apiCreate(data){
   const p = fetch(SELF_URL, {
     method:'POST',
@@ -214,7 +225,6 @@ async function apiCreate(data){
   }).then(res => res.json());
   return withTimeout(p, 15000, 'menyimpan data');
 }
-
 async function apiDelete(id){
   const p = fetch(SELF_URL, {
     method:'POST',
@@ -224,12 +234,21 @@ async function apiDelete(id){
   return withTimeout(p, 15000, 'menghapus data');
 }
 
+async function apiUpdate(id, data){
+  const p = fetch(SELF_URL, {
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({ action:'update', id, data })
+  }).then(res => res.json());
+  return withTimeout(p, 15000, 'memperbarui data');
+}
+
+// ---------- list rendering ----------
 function daysDiff(dateStr){
   const today = new Date(); today.setHours(0,0,0,0);
   const d = new Date(dateStr); d.setHours(0,0,0,0);
   return Math.round((d - today) / 86400000);
 }
-
 function railClass(diff){
   if(diff < 0) return 'past';
   if(diff === 0) return 'h0';
@@ -238,30 +257,29 @@ function railClass(diff){
   if(diff === 5) return 'h5';
   return 'far';
 }
-
 function badgeText(diff){
   if(diff < 0) return 'Lewat';
   if(diff === 0) return 'HARI INI';
   if(diff === 1) return 'H-1';
   return 'H-' + diff;
 }
-
 function formatTanggal(dateStr){
   const d = new Date(dateStr);
   return d.toLocaleDateString('id-ID', { day:'numeric', month:'long', year:'numeric' });
 }
 
-function formatJamBersih(waktuInput) {
-  if (!waktuInput) return '';
-  if (waktuInput.includes('GMT') || waktuInput.includes('1899')) {
-    const d = new Date(waktuInput);
-    if (!isNaN(d.getTime())) {
-      const jam = String(d.getHours()).padStart(2, '0');
-      const menit = String(d.getMinutes()).padStart(2, '0');
+function formatJamBersih(waktuInput){
+  if(!waktuInput) return '';
+  const s = String(waktuInput);
+  if(s.includes('GMT') || s.includes('1899')){
+    const d = new Date(s);
+    if(!isNaN(d.getTime())){
+      const jam = String(d.getHours()).padStart(2,'0');
+      const menit = String(d.getMinutes()).padStart(2,'0');
       return `${jam}:${menit}`;
     }
   }
-  return waktuInput;
+  return s;
 }
 
 async function fetchEvents(){
@@ -278,7 +296,7 @@ async function fetchEvents(){
 function renderList(){
   const container = document.getElementById('listContainer');
   if(!EVENTS.length){
-    container.innerHTML = '<div class="empty"><span class="bolt"></span>Belum ada kegiatan aktif / belum selesai.</div>';
+    container.innerHTML = '<div class="empty"><span class="bolt"></span>Belum ada kegiatan aktif.</div>';
     return;
   }
   const sorted = [...EVENTS].sort((a,b)=> new Date(a.tanggal) - new Date(b.tanggal));
@@ -287,7 +305,6 @@ function renderList(){
     const rc = railClass(diff);
     const lokasiLabel = ev.tipe === 'online' ? 'Link' : 'Lokasi';
     const jamBersih = formatJamBersih(ev.waktu);
-    
     return `
     <div class="card">
       <div class="rail ${rc}"></div>
@@ -303,27 +320,13 @@ function renderList(){
           ${ev.catatan ? `<div> ${escapeHtml(ev.catatan)}</div>` : ''}
         </div>
         <div class="card-actions">
-          <button class="link-btn" style="color: var(--soon);" onclick="completeEvent('${ev.id}')">Selesai</button>
+          <button class="link-btn" onclick="editEvent('${ev.id}')">Edit</button>
+          <button class="link-btn" style="color:var(--soon);" onclick="completeEvent('${ev.id}')">Selesai</button>
           <button class="link-btn danger" onclick="removeEvent('${ev.id}')">Hapus</button>
         </div>
       </div>
     </div>`;
   }).join('');
-}
-
-async function completeEvent(id){
-  if(!confirm('Tandai kegiatan ini sudah selesai? (Kegiatan akan diarsipkan dari daftar)')) return;
-  try{
-    const res = await fetch(SELF_URL + '?action=complete&id=' + id).then(r => r.json());
-    if(res.ok){
-      showToast('Kegiatan selesai & diarsipkan');
-      fetchEvents();
-    } else {
-      throw new Error(res.message || 'Gagal memproses');
-    }
-  }catch(e){
-    showToast(e.message || 'Gagal mengubah status');
-  }
 }
 
 async function removeEvent(id){
@@ -335,6 +338,55 @@ async function removeEvent(id){
   }catch(e){
     showToast('Gagal menghapus');
   }
+}
+
+async function completeEvent(id){
+  if(!confirm('Tandai kegiatan ini sudah selesai? (akan hilang dari daftar)')) return;
+  try{
+    const res = await fetch(SELF_URL + '?action=complete&id=' + encodeURIComponent(id)).then(r => r.json());
+    if(!res.ok) throw new Error(res.message || 'Gagal memproses');
+    showToast('Kegiatan selesai & diarsipkan');
+    fetchEvents();
+  }catch(e){
+    showToast(e.message || 'Gagal mengubah status');
+  }
+}
+
+let editingId = null;
+
+function editEvent(id){
+  const ev = EVENTS.find(x => x.id === id);
+  if(!ev) return;
+  editingId = id;
+
+  document.getElementById('f-judul').value = ev.judul || '';
+  document.getElementById('f-kepada').value = ev.kepada || '';
+  document.getElementById('f-tanggal').value = String(ev.tanggal).slice(0,10);
+  document.getElementById('f-waktu').value = formatJamBersih(ev.waktu);
+  document.getElementById('f-lokasi').value = ev.lokasiLink || '';
+  document.getElementById('f-catatan').value = ev.catatan || '';
+
+  addType = (ev.tipe === 'online') ? 'online' : 'offline';
+  document.querySelectorAll('.type-toggle button[data-type]').forEach(b=>{
+    b.classList.toggle('active', b.dataset.type === addType);
+  });
+  document.getElementById('lokasiLabel').textContent = addType === 'online' ? 'Link online' : 'Lokasi';
+
+  document.getElementById('submitBtn').textContent = 'Update Kegiatan';
+  document.getElementById('cancelEditBtn').style.display = 'block';
+  document.querySelector('.tab-btn[data-tab="add"]').click();
+}
+
+function cancelEdit(){
+  editingId = null;
+  document.getElementById('eventForm').reset();
+  document.getElementById('submitBtn').textContent = 'Simpan Kegiatan';
+  document.getElementById('cancelEditBtn').style.display = 'none';
+  addType = 'offline';
+  document.querySelectorAll('.type-toggle button[data-type]').forEach(b=>{
+    b.classList.toggle('active', b.dataset.type === 'offline');
+  });
+  document.getElementById('lokasiLabel').textContent = 'Lokasi';
 }
 
 function escapeHtml(str){
@@ -367,7 +419,8 @@ document.querySelectorAll('.type-toggle button[data-type]').forEach(btn=>{
 document.getElementById('eventForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
   const btn = document.getElementById('submitBtn');
-  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  const isEdit = !!editingId;
+  btn.disabled = true; btn.textContent = isEdit ? 'Memperbarui...' : 'Menyimpan...';
   try{
     const data = {
       judul: document.getElementById('f-judul').value.trim(),
@@ -378,20 +431,20 @@ document.getElementById('eventForm').addEventListener('submit', async (e)=>{
       lokasiLink: document.getElementById('f-lokasi').value.trim(),
       catatan: document.getElementById('f-catatan').value.trim()
     };
-    const result = await apiCreate(data);
+    const result = isEdit ? await apiUpdate(editingId, data) : await apiCreate(data);
     if(!result.ok) throw new Error(result.error || 'Gagal menyimpan');
-    showToast('Kegiatan tersimpan');
-    document.getElementById('eventForm').reset();
+    showToast(isEdit ? 'Kegiatan diperbarui' : 'Kegiatan tersimpan');
+    cancelEdit();
     document.querySelector('.tab-btn[data-tab="list"]').click();
     fetchEvents();
   }catch(err){
     showToast(err.message || 'Gagal menyimpan');
   }finally{
-    btn.disabled = false; btn.textContent = 'Simpan Kegiatan';
+    btn.disabled = false; btn.textContent = editingId ? 'Update Kegiatan' : 'Simpan Kegiatan';
   }
 });
 
-// ---------- Gemini Prompt ----------
+// ---------- Gemini extraction (dipakai bareng oleh Scan Foto & Tempel Teks) ----------
 const EXTRACT_PROMPT = `Ekstrak informasi kegiatan/rapat dari isi berikut (Bahasa Indonesia).
 Balas HANYA dengan JSON valid persis struktur ini, tanpa teks lain, tanpa markdown code fence:
 {
@@ -527,6 +580,7 @@ document.getElementById('pasteSaveBtn').addEventListener('click', async ()=>{
   document.getElementById('pasteText').value = '';
 });
 
+// ---------- simpan generik (dipakai Scan Foto & Tempel Teks) ----------
 async function saveFromForm(prefix, tipe, btn, formId, previewAreaId, statusId){
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try{
@@ -555,6 +609,7 @@ async function saveFromForm(prefix, tipe, btn, formId, previewAreaId, statusId){
   }
 }
 
+// ---------- init ----------
 (async function init(){
   fetchEvents();
 })();
