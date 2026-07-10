@@ -278,11 +278,11 @@ let scanType = 'offline';
 let pasteType = 'offline';
 let scanFileData = null;
 
-function showToast(msg){
+function showToast(msg, durationMs){
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'), 2200);
+  setTimeout(()=>t.classList.remove('show'), durationMs || 2200);
 }
 
 // ---------- backend calls (fetch ke SELF_URL yang disuntik server) ----------
@@ -585,7 +585,11 @@ document.getElementById('eventForm').addEventListener('submit', async (e)=>{
     };
     const result = isEdit ? await apiUpdate(editingId, data) : await apiCreate(data);
     if(!result.ok) throw new Error(result.error || 'Gagal menyimpan');
-    showToast(isEdit ? 'Kegiatan diperbarui' : 'Kegiatan tersimpan');
+    if(result.calendarSynced === false){
+      showToast('Tersimpan, tapi GAGAL sync ke Kalender' + (result.calendarError ? ': ' + result.calendarError : ''), 4500);
+    } else {
+      showToast(isEdit ? 'Kegiatan diperbarui' : 'Kegiatan tersimpan');
+    }
     cancelEdit();
     document.querySelector('.tab-btn[data-tab="list"]').click();
     fetchEvents();
@@ -768,19 +772,24 @@ let voiceType = 'offline';
 let recognition = null;
 let isRecording = false;
 
-// Potongan teks yang sudah "final" ditampung sebagai array kata/frasa
-// terpisah, bukan satu string yang terus ditambah -- ini supaya kita bisa
-// mengecek & menolak pengulangan sebelum ditempel ke transkrip.
-let finalizedChunks = [];
-// Index tertinggi dari e.results yang sudah pernah diproses. Beberapa
-// browser (terutama Chrome Android) suka mengirim event "final" LEBIH DARI
-// SEKALI untuk ucapan pendek yang sama -- baik dengan index yang sama
-// (makanya kita skip index yang sudah pernah diproses) maupun dengan isi
-// yang sama persis di index baru (makanya kita juga cek ke chunk terakhir).
+// Beberapa HP/browser (banyak terjadi di Chrome Android) TIDAK mengirim kata
+// baru saja tiap kali "final" -- mereka mengirim ULANG SELURUH kalimat dari
+// awal, ditambah satu kata baru di akhir, sebagai entri terpisah. Kalau
+// entri-entri itu cuma digabung/ditambah, hasilnya numpuk parah (setiap
+// kalimat separuh jadi muncul berkali-kali). Solusinya: `committedText`
+// menyimpan kalimat-kalimat yang sudah benar-benar selesai/terkunci,
+// sedangkan `currentUtterance` adalah kalimat yang LAGI TUMBUH -- tiap hasil
+// baru yang merupakan KELANJUTAN dari currentUtterance akan MENGGANTIKANNYA,
+// bukan ditambah sebagai entri baru. Entri baru dianggap kalimat baru
+// (dan currentUtterance lama dikunci ke committedText) hanya kalau isinya
+// sama sekali bukan kelanjutan dari yang sedang tumbuh.
+let committedText = '';
+let currentUtterance = '';
 let highestFinalIndexSeen = -1;
 
 function resetTranscriptState(baseText){
-  finalizedChunks = baseText ? [baseText.trim()] : [];
+  committedText = baseText ? baseText.trim() : '';
+  currentUtterance = '';
   highestFinalIndexSeen = -1;
 }
 
@@ -815,17 +824,31 @@ function initSpeechRecognition(){
     let interim = '';
     for(let i = 0; i < e.results.length; i++){
       const result = e.results[i];
+      const t = result[0].transcript.trim();
+      if(!t) continue;
+
       if(result.isFinal){
-        if(i <= highestFinalIndexSeen) continue; // index ini sudah pernah dicatat, lewati
+        if(i <= highestFinalIndexSeen) continue; // index ini sudah pernah diproses, lewati
         highestFinalIndexSeen = i;
-        const t = result[0].transcript.trim();
-        const lastChunk = finalizedChunks[finalizedChunks.length - 1];
-        if(t && t !== lastChunk) finalizedChunks.push(t); // tolak kalau identik dgn kata/frasa terakhir
+
+        const cur = currentUtterance.toLowerCase();
+        const low = t.toLowerCase();
+        if(!currentUtterance || low.startsWith(cur)){
+          // Kelanjutan wajar dari kalimat yang lagi tumbuh -> ganti, bukan tambah
+          currentUtterance = t;
+        } else if(cur.startsWith(low)){
+          // Versi baru lebih pendek dari yang sudah ada -> bukan info baru, abaikan
+        } else {
+          // Benar-benar kalimat baru -> kunci yang lama, mulai yang baru
+          committedText = (committedText + ' ' + currentUtterance).trim();
+          currentUtterance = t;
+        }
       } else {
-        interim += result[0].transcript;
+        interim = t; // ambil interim TERAKHIR saja, jangan digabung semua entri
       }
     }
-    document.getElementById('voiceTranscript').value = (finalizedChunks.join(' ') + ' ' + interim).trim();
+    const liveText = (committedText + ' ' + (currentUtterance || interim)).trim();
+    document.getElementById('voiceTranscript').value = liveText;
   };
   recognition.onerror = (e)=>{
     if(e.error === 'not-allowed' || e.error === 'service-not-allowed'){
@@ -887,7 +910,8 @@ document.getElementById('voiceAnalyzeBtn').addEventListener('click', async ()=>{
 document.getElementById('voiceSaveBtn').addEventListener('click', async ()=>{
   await saveFromForm('v', voiceType, document.getElementById('voiceSaveBtn'), 'voiceResultForm', null, 'voiceStatus');
   document.getElementById('voiceTranscript').value = '';
-  finalizedChunks = [];
+  committedText = '';
+  currentUtterance = '';
   highestFinalIndexSeen = -1;
 });
 
@@ -911,7 +935,11 @@ async function saveFromForm(prefix, tipe, btn, formId, previewAreaId, statusId){
     if(!data.judul || !data.tanggal) throw new Error('Judul dan tanggal wajib diisi');
     const result = await apiCreate(data);
     if(!result.ok) throw new Error(result.error || 'Gagal menyimpan');
-    showToast('Kegiatan tersimpan');
+    if(result.calendarSynced === false){
+      showToast('Tersimpan, tapi GAGAL sync ke Kalender' + (result.calendarError ? ': ' + result.calendarError : ''), 4500);
+    } else {
+      showToast('Kegiatan tersimpan');
+    }
     document.getElementById(formId).style.display = 'none';
     if(previewAreaId) document.getElementById(previewAreaId).innerHTML = '';
     document.getElementById(statusId).innerHTML = '';
