@@ -767,7 +767,22 @@ document.getElementById('pasteSaveBtn').addEventListener('click', async ()=>{
 let voiceType = 'offline';
 let recognition = null;
 let isRecording = false;
-let finalTranscript = '';
+
+// Potongan teks yang sudah "final" ditampung sebagai array kata/frasa
+// terpisah, bukan satu string yang terus ditambah -- ini supaya kita bisa
+// mengecek & menolak pengulangan sebelum ditempel ke transkrip.
+let finalizedChunks = [];
+// Index tertinggi dari e.results yang sudah pernah diproses. Beberapa
+// browser (terutama Chrome Android) suka mengirim event "final" LEBIH DARI
+// SEKALI untuk ucapan pendek yang sama -- baik dengan index yang sama
+// (makanya kita skip index yang sudah pernah diproses) maupun dengan isi
+// yang sama persis di index baru (makanya kita juga cek ke chunk terakhir).
+let highestFinalIndexSeen = -1;
+
+function resetTranscriptState(baseText){
+  finalizedChunks = baseText ? [baseText.trim()] : [];
+  highestFinalIndexSeen = -1;
+}
 
 function initSpeechRecognition(){
   const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -798,12 +813,19 @@ function initSpeechRecognition(){
   };
   recognition.onresult = (e)=>{
     let interim = '';
-    for(let i = e.resultIndex; i < e.results.length; i++){
-      const t = e.results[i][0].transcript;
-      if(e.results[i].isFinal) finalTranscript += t + ' ';
-      else interim += t;
+    for(let i = 0; i < e.results.length; i++){
+      const result = e.results[i];
+      if(result.isFinal){
+        if(i <= highestFinalIndexSeen) continue; // index ini sudah pernah dicatat, lewati
+        highestFinalIndexSeen = i;
+        const t = result[0].transcript.trim();
+        const lastChunk = finalizedChunks[finalizedChunks.length - 1];
+        if(t && t !== lastChunk) finalizedChunks.push(t); // tolak kalau identik dgn kata/frasa terakhir
+      } else {
+        interim += result[0].transcript;
+      }
     }
-    document.getElementById('voiceTranscript').value = (finalTranscript + interim).trim();
+    document.getElementById('voiceTranscript').value = (finalizedChunks.join(' ') + ' ' + interim).trim();
   };
   recognition.onerror = (e)=>{
     if(e.error === 'not-allowed' || e.error === 'service-not-allowed'){
@@ -820,7 +842,7 @@ function initSpeechRecognition(){
 
   micBtn.addEventListener('click', ()=>{
     if(isRecording){ recognition.stop(); return; }
-    finalTranscript = document.getElementById('voiceTranscript').value ? document.getElementById('voiceTranscript').value.trim() + ' ' : '';
+    resetTranscriptState(document.getElementById('voiceTranscript').value);
     try{ recognition.start(); }catch(err){ /* sudah jalan, abaikan */ }
   });
 })();
@@ -865,7 +887,8 @@ document.getElementById('voiceAnalyzeBtn').addEventListener('click', async ()=>{
 document.getElementById('voiceSaveBtn').addEventListener('click', async ()=>{
   await saveFromForm('v', voiceType, document.getElementById('voiceSaveBtn'), 'voiceResultForm', null, 'voiceStatus');
   document.getElementById('voiceTranscript').value = '';
-  finalTranscript = '';
+  finalizedChunks = [];
+  highestFinalIndexSeen = -1;
 });
 
 // ---------- simpan generik (dipakai Scan Foto & Tempel Teks) ----------
