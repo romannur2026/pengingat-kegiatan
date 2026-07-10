@@ -8,6 +8,7 @@
     --bg:#F4F6F5; --surface:#FFFFFF; --ink:#16232B; --muted:#5C6B73;
     --brand:#0B4F6C; --brand-dark:#083C52; --accent:#F4C542;
     --danger:#D64550; --warn:#E8973B; --soon:#2F8F7C; --far:#7C93A3;
+    --ongoing:#6B4FA0;
     --line:#E3E8E7; --radius:14px;
   }
   *{box-sizing:border-box;}
@@ -39,6 +40,7 @@
   .rail.h5,.rail.h3{background:var(--soon);}
   .rail.h1{background:var(--warn);}
   .rail.h0{background:var(--danger);}
+  .rail.ongoing{background:var(--ongoing);}
   .rail.past{background:var(--line);}
   .card-body{padding:13px 14px;flex:1;min-width:0;}
   .card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;}
@@ -48,6 +50,7 @@
   .badge.h5,.badge.h3{background:var(--soon);}
   .badge.h1{background:var(--warn);}
   .badge.h0{background:var(--danger);}
+  .badge.ongoing{background:var(--ongoing);}
   .badge.past{background:var(--line);color:var(--muted);}
   .card-meta{font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.6;}
   .card-meta div{display:flex;gap:6px;}
@@ -57,6 +60,7 @@
   .link-btn.danger{color:var(--danger);}
   .field{margin-bottom:12px;}
   .field label{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:5px;}
+  .field .hint{font-size:11px;color:var(--muted);margin-top:4px;}
   .row2{display:flex;gap:10px;}
   .row2 .field{flex:1;}
   .type-toggle{display:flex;gap:8px;}
@@ -103,8 +107,13 @@
       <div class="field"><label>Judul kegiatan</label><input type="text" id="f-judul" placeholder="Rapat Evaluasi Kinerja Q2" required /></div>
       <div class="field"><label>Kepada / dari siapa</label><input type="text" id="f-kepada" placeholder="Manajer UP3 Selaparang" /></div>
       <div class="row2">
-        <div class="field"><label>Tanggal</label><input type="date" id="f-tanggal" required /></div>
+        <div class="field"><label>Tanggal mulai</label><input type="date" id="f-tanggal" required /></div>
         <div class="field"><label>Waktu</label><input type="time" id="f-waktu" /></div>
+      </div>
+      <div class="field">
+        <label>Tanggal selesai (opsional)</label>
+        <input type="date" id="f-tanggal-selesai" />
+        <div class="hint">Kosongkan kalau kegiatannya cuma 1 hari.</div>
       </div>
       <div class="field">
         <label>Jenis kegiatan</label>
@@ -134,8 +143,13 @@
       <div class="field"><label>Judul kegiatan</label><input type="text" id="s-judul" /></div>
       <div class="field"><label>Kepada / dari siapa</label><input type="text" id="s-kepada" /></div>
       <div class="row2">
-        <div class="field"><label>Tanggal</label><input type="date" id="s-tanggal" /></div>
+        <div class="field"><label>Tanggal mulai</label><input type="date" id="s-tanggal" /></div>
         <div class="field"><label>Waktu</label><input type="time" id="s-waktu" /></div>
+      </div>
+      <div class="field">
+        <label>Tanggal selesai (opsional)</label>
+        <input type="date" id="s-tanggal-selesai" />
+        <div class="hint">Kosongkan kalau kegiatannya cuma 1 hari.</div>
       </div>
       <div class="field">
         <label>Jenis kegiatan</label>
@@ -162,8 +176,13 @@
       <div class="field"><label>Judul kegiatan</label><input type="text" id="p-judul" /></div>
       <div class="field"><label>Kepada / dari siapa</label><input type="text" id="p-kepada" /></div>
       <div class="row2">
-        <div class="field"><label>Tanggal</label><input type="date" id="p-tanggal" /></div>
+        <div class="field"><label>Tanggal mulai</label><input type="date" id="p-tanggal" /></div>
         <div class="field"><label>Waktu</label><input type="time" id="p-waktu" /></div>
+      </div>
+      <div class="field">
+        <label>Tanggal selesai (opsional)</label>
+        <input type="date" id="p-tanggal-selesai" />
+        <div class="hint">Kosongkan kalau kegiatannya cuma 1 hari.</div>
       </div>
       <div class="field">
         <label>Jenis kegiatan</label>
@@ -249,23 +268,45 @@ function daysDiff(dateStr){
   const d = new Date(dateStr); d.setHours(0,0,0,0);
   return Math.round((d - today) / 86400000);
 }
-function railClass(diff){
-  if(diff < 0) return 'past';
-  if(diff === 0) return 'h0';
-  if(diff === 1) return 'h1';
-  if(diff === 3) return 'h3';
-  if(diff === 5) return 'h5';
-  return 'far';
+
+// Menentukan status/badge kegiatan, dengan dukungan rentang multi-hari.
+// Kalau kegiatan punya tanggalSelesai dan hari ini ada di antara tanggal
+// mulai & selesai (inklusif), statusnya "BERLANGSUNG" -- ini diprioritaskan
+// di atas badge H-5/H-3/H-1 karena kegiatannya sudah/sedang jalan.
+function getEventStatus(ev){
+  const diffStart = daysDiff(ev.tanggal);
+  const hasRange = !!ev.tanggalSelesai && ev.tanggalSelesai !== ev.tanggal;
+  const diffEnd = hasRange ? daysDiff(ev.tanggalSelesai) : diffStart;
+
+  if(hasRange && diffStart <= 0 && diffEnd >= 0){
+    return { code: 'ongoing', label: 'BERLANGSUNG' };
+  }
+  if(diffEnd < 0) return { code: 'past', label: 'Lewat' };
+  if(diffStart === 0) return { code: 'h0', label: 'HARI INI' };
+  if(diffStart === 1) return { code: 'h1', label: 'H-1' };
+  if(diffStart === 3) return { code: 'h3', label: 'H-3' };
+  if(diffStart === 5) return { code: 'h5', label: 'H-5' };
+  if(diffStart > 0) return { code: 'far', label: 'H-' + diffStart };
+  return { code: 'far', label: formatTanggal(ev.tanggal) };
 }
-function badgeText(diff){
-  if(diff < 0) return 'Lewat';
-  if(diff === 0) return 'HARI INI';
-  if(diff === 1) return 'H-1';
-  return 'H-' + diff;
-}
+
 function formatTanggal(dateStr){
   const d = new Date(dateStr);
   return d.toLocaleDateString('id-ID', { day:'numeric', month:'long', year:'numeric' });
+}
+
+// Rentang tanggal ringkas: "9 Juli 2026" (1 hari) atau
+// "9 – 12 Juli 2026" / "30 Juli – 2 Agustus 2026" (multi-hari)
+function formatTanggalRange(startStr, endStr){
+  if(!endStr || endStr === startStr) return formatTanggal(startStr);
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear();
+  const startFmt = sameMonth
+    ? start.toLocaleDateString('id-ID', { day:'numeric' })
+    : start.toLocaleDateString('id-ID', { day:'numeric', month:'long', year: start.getFullYear() !== end.getFullYear() ? 'numeric' : undefined });
+  const endFmt = end.toLocaleDateString('id-ID', { day:'numeric', month:'long', year:'numeric' });
+  return startFmt + ' – ' + endFmt;
 }
 
 function formatJamBersih(waktuInput){
@@ -301,21 +342,21 @@ function renderList(){
   }
   const sorted = [...EVENTS].sort((a,b)=> new Date(a.tanggal) - new Date(b.tanggal));
   container.innerHTML = sorted.map(ev=>{
-    const diff = daysDiff(ev.tanggal);
-    const rc = railClass(diff);
+    const status = getEventStatus(ev);
     const lokasiLabel = ev.tipe === 'online' ? 'Link' : 'Lokasi';
     const jamBersih = formatJamBersih(ev.waktu);
+    const tglTampil = formatTanggalRange(ev.tanggal, ev.tanggalSelesai);
     return `
     <div class="card">
-      <div class="rail ${rc}"></div>
+      <div class="rail ${status.code}"></div>
       <div class="card-body">
         <div class="card-top">
           <p class="card-title">${escapeHtml(ev.judul)}</p>
-          <span class="badge ${rc}">${badgeText(diff)}</span>
+          <span class="badge ${status.code}">${status.label}</span>
         </div>
         <div class="card-meta">
           ${ev.kepada ? `<div> <b>${escapeHtml(ev.kepada)}</b></div>` : ''}
-          <div> ${formatTanggal(ev.tanggal)}${jamBersih ? ' · ' + jamBersih : ''}</div>
+          <div> ${tglTampil}${jamBersih ? ' · ' + jamBersih : ''}</div>
           ${ev.lokasiLink ? `<div> ${lokasiLabel}: ${escapeHtml(ev.lokasiLink)}</div>` : ''}
           ${ev.catatan ? `<div> ${escapeHtml(ev.catatan)}</div>` : ''}
         </div>
@@ -362,6 +403,7 @@ function editEvent(id){
   document.getElementById('f-judul').value = ev.judul || '';
   document.getElementById('f-kepada').value = ev.kepada || '';
   document.getElementById('f-tanggal').value = String(ev.tanggal).slice(0,10);
+  document.getElementById('f-tanggal-selesai').value = ev.tanggalSelesai ? String(ev.tanggalSelesai).slice(0,10) : '';
   document.getElementById('f-waktu').value = formatJamBersih(ev.waktu);
   document.getElementById('f-lokasi').value = ev.lokasiLink || '';
   document.getElementById('f-catatan').value = ev.catatan || '';
@@ -422,10 +464,14 @@ document.getElementById('eventForm').addEventListener('submit', async (e)=>{
   const isEdit = !!editingId;
   btn.disabled = true; btn.textContent = isEdit ? 'Memperbarui...' : 'Menyimpan...';
   try{
+    const tglMulai = document.getElementById('f-tanggal').value;
+    const tglSelesai = document.getElementById('f-tanggal-selesai').value;
+    if(tglSelesai && tglSelesai < tglMulai) throw new Error('Tanggal selesai tidak boleh sebelum tanggal mulai');
     const data = {
       judul: document.getElementById('f-judul').value.trim(),
       kepada: document.getElementById('f-kepada').value.trim(),
-      tanggal: document.getElementById('f-tanggal').value,
+      tanggal: tglMulai,
+      tanggalSelesai: tglSelesai,
       waktu: document.getElementById('f-waktu').value,
       tipe: addType,
       lokasiLink: document.getElementById('f-lokasi').value.trim(),
@@ -451,6 +497,7 @@ Balas HANYA dengan JSON valid persis struktur ini, tanpa teks lain, tanpa markdo
   "judul": "judul/nama kegiatan",
   "kepada": "ditujukan kepada siapa/instansi apa (kosongkan jika tidak ada)",
   "tanggal": "format YYYY-MM-DD, asumsikan tahun berjalan jika tidak tertulis",
+  "tanggalSelesai": "format YYYY-MM-DD, isi HANYA jika kegiatan berlangsung lebih dari 1 hari, kosongkan jika cuma 1 hari",
   "waktu": "format HH:mm 24 jam, kosongkan jika tidak ada",
   "tipe": "online atau offline",
   "lokasiLink": "alamat lokasi jika offline, atau link meeting jika online",
@@ -529,6 +576,7 @@ function fillResultForm(prefix, parsed){
   document.getElementById(prefix+'-judul').value = parsed.judul || '';
   document.getElementById(prefix+'-kepada').value = parsed.kepada || '';
   document.getElementById(prefix+'-tanggal').value = parsed.tanggal || '';
+  document.getElementById(prefix+'-tanggal-selesai').value = parsed.tanggalSelesai || '';
   document.getElementById(prefix+'-waktu').value = formatJamBersih(parsed.waktu);
   document.getElementById(prefix+'-lokasi').value = parsed.lokasiLink || '';
   document.getElementById(prefix+'-catatan').value = parsed.catatan || '';
@@ -584,10 +632,14 @@ document.getElementById('pasteSaveBtn').addEventListener('click', async ()=>{
 async function saveFromForm(prefix, tipe, btn, formId, previewAreaId, statusId){
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try{
+    const tglMulai = document.getElementById(prefix+'-tanggal').value;
+    const tglSelesai = document.getElementById(prefix+'-tanggal-selesai').value;
+    if(tglSelesai && tglSelesai < tglMulai) throw new Error('Tanggal selesai tidak boleh sebelum tanggal mulai');
     const data = {
       judul: document.getElementById(prefix+'-judul').value.trim(),
       kepada: document.getElementById(prefix+'-kepada').value.trim(),
-      tanggal: document.getElementById(prefix+'-tanggal').value,
+      tanggal: tglMulai,
+      tanggalSelesai: tglSelesai,
       waktu: document.getElementById(prefix+'-waktu').value,
       tipe: tipe,
       lokasiLink: document.getElementById(prefix+'-lokasi').value.trim(),
