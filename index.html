@@ -597,12 +597,27 @@ document.getElementById('eventForm').addEventListener('submit', async (e)=>{
 });
 
 // ---------- Gemini extraction (dipakai bareng oleh Scan Foto & Tempel Teks) ----------
-const EXTRACT_PROMPT = `Ekstrak informasi kegiatan/rapat dari isi berikut (Bahasa Indonesia).
+// Prompt dibuat dinamis (bukan konstanta) supaya selalu menyertakan tanggal
+// HARI INI yang sebenarnya. Tanpa ini, Gemini bisa salah menebak tahun kalau
+// yang diucapkan/ditulis cuma "9 Juli" tanpa tahun -- akibatnya tanggal
+// kegiatan meleset ke masa lalu, dan kegiatan itu otomatis hilang dari tab
+// "Aktif" (walau datanya tetap ada di spreadsheet).
+function buildExtractPrompt(){
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth()+1).padStart(2,'0');
+  const dd = String(now.getDate()).padStart(2,'0');
+  const isoToday = `${yyyy}-${mm}-${dd}`;
+  const humanToday = now.toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+
+  return `Hari ini adalah ${humanToday} (${isoToday}). Gunakan tanggal ini sebagai acuan untuk kata-kata relatif ("besok", "lusa", "minggu depan") dan untuk menentukan TAHUN kalau tahunnya tidak disebutkan secara eksplisit -- jangan pernah mengarang tahun yang membuat kegiatan jadi di masa lalu kecuali memang jelas-jelas disebutkan tanggal lampau.
+
+Ekstrak informasi kegiatan/rapat dari isi berikut (Bahasa Indonesia). Isi berikut bisa berasal dari hasil transkrip suara, jadi mungkin ada typo pengucapan atau kata yang terdengar mirip -- gunakan konteks untuk menebak maksud yang paling masuk akal.
 Balas HANYA dengan JSON valid persis struktur ini, tanpa teks lain, tanpa markdown code fence:
 {
   "judul": "judul/nama kegiatan",
   "kepada": "ditujukan kepada siapa/instansi apa (kosongkan jika tidak ada)",
-  "tanggal": "format YYYY-MM-DD, asumsikan tahun berjalan jika tidak tertulis",
+  "tanggal": "format YYYY-MM-DD",
   "tanggalSelesai": "format YYYY-MM-DD, isi HANYA jika kegiatan berlangsung lebih dari 1 hari, kosongkan jika cuma 1 hari",
   "waktu": "format HH:mm 24 jam, kosongkan jika tidak ada",
   "tipe": "online atau offline",
@@ -610,6 +625,18 @@ Balas HANYA dengan JSON valid persis struktur ini, tanpa teks lain, tanpa markdo
   "catatan": "info tambahan penting seperti dresscode, yang perlu dibawa, dsb (boleh kosong)"
 }
 Jika suatu field tidak ditemukan, isi dengan string kosong "". Jangan mengarang informasi.`;
+}
+
+// Kalau tanggal hasil ekstraksi AI ternyata ada di masa lalu, kegiatan itu
+// akan otomatis tersembunyi dari tab "Aktif" walau tetap tersimpan --
+// jadi user perlu diperingatkan SEBELUM menekan simpan, bukan sesudahnya.
+function warnIfPastDate(dateStr){
+  if(!dateStr) return;
+  const diff = daysDiff(dateStr);
+  if(!isNaN(diff) && diff < 0){
+    showToast('⚠️ Tanggal yang terbaca ada di masa lalu -- cek dulu sebelum simpan');
+  }
+}
 
 async function callGemini(parts){
   const p = fetch(SELF_URL, {
@@ -661,10 +688,11 @@ async function analyzeInvitation(){
   statusEl.innerHTML = '<div class="status-line"><div class="spinner"></div> Membaca undangan dengan AI...</div>';
   try{
     const parsed = await callGemini([
-      { text: EXTRACT_PROMPT },
+      { text: buildExtractPrompt() },
       { inline_data: { mime_type: scanFileData.mediaType, data: scanFileData.base64 } }
     ]);
     fillResultForm('s', parsed);
+    warnIfPastDate(parsed.tanggal);
     scanType = (parsed.tipe === 'online') ? 'online' : 'offline';
     document.querySelectorAll('.type-toggle button[data-stype]').forEach(b=>{
       b.classList.toggle('active', b.dataset.stype === scanType);
@@ -713,9 +741,10 @@ document.getElementById('pasteAnalyzeBtn').addEventListener('click', async ()=>{
   statusEl.innerHTML = '<div class="status-line"><div class="spinner"></div> Membaca teks dengan AI...</div>';
   try{
     const parsed = await callGemini([
-      { text: EXTRACT_PROMPT + '\\n\\nTeks:\\n' + text }
+      { text: buildExtractPrompt() + '\\n\\nTeks:\\n' + text }
     ]);
     fillResultForm('p', parsed);
+    warnIfPastDate(parsed.tanggal);
     pasteType = (parsed.tipe === 'online') ? 'online' : 'offline';
     document.querySelectorAll('.type-toggle button[data-ptype]').forEach(b=>{
       b.classList.toggle('active', b.dataset.ptype === pasteType);
@@ -816,9 +845,10 @@ document.getElementById('voiceAnalyzeBtn').addEventListener('click', async ()=>{
   statusEl.innerHTML = '<div class="status-line"><div class="spinner"></div> Membaca hasil rekaman dengan AI...</div>';
   try{
     const parsed = await callGemini([
-      { text: EXTRACT_PROMPT + '\\n\\nTeks (hasil rekaman suara, mungkin ada typo pengucapan):\\n' + text }
+      { text: buildExtractPrompt() + '\\n\\nTeks (hasil rekaman suara, mungkin ada typo pengucapan):\\n' + text }
     ]);
     fillResultForm('v', parsed);
+    warnIfPastDate(parsed.tanggal);
     voiceType = (parsed.tipe === 'online') ? 'online' : 'offline';
     document.querySelectorAll('.type-toggle button[data-vtype]').forEach(b=>{
       b.classList.toggle('active', b.dataset.vtype === voiceType);
