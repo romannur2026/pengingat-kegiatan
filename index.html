@@ -59,6 +59,8 @@
   .filter-btn{border:1px solid var(--line);background:var(--surface);color:var(--muted);font-size:12px;font-weight:700;padding:7px 12px;border-radius:999px;cursor:pointer;white-space:nowrap;}
   .filter-btn.active{background:var(--ink);color:#fff;border-color:var(--ink);}
   .status-select{font-size:12px;font-weight:700;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink);}
+  .btn-primary.recording{background:var(--danger);}
+  .btn-primary.recording::before{content:"● ";}
   .card-meta{font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.6;}
   .card-meta div{display:flex;gap:6px;}
   .card-meta b{color:var(--ink);font-weight:600;}
@@ -101,6 +103,7 @@
     <button class="tab-btn" data-tab="add">Tambah</button>
     <button class="tab-btn" data-tab="scan">Scan Foto</button>
     <button class="tab-btn" data-tab="paste">Tempel Teks</button>
+    <button class="tab-btn" data-tab="voice">Suara</button>
   </div>
 
   <!-- LIST -->
@@ -207,6 +210,55 @@
       <div class="field"><label id="pLokasiLabel">Lokasi</label><input type="text" id="p-lokasi" /></div>
       <div class="field"><label>Catatan</label><textarea id="p-catatan" rows="2"></textarea></div>
       <button class="btn-primary" id="pasteSaveBtn">Simpan Kegiatan Ini</button>
+    </div>
+  </section>
+
+  <!-- SUARA -->
+  <section class="panel" id="panel-voice">
+    <div class="field">
+      <label>Rekam &amp; ucapkan detail kegiatan</label>
+    </div>
+    <div class="config-panel open" style="margin-bottom:14px;">
+      <label style="display:block;margin-bottom:8px;">Urutan yang paling gampang dibaca AI:</label>
+      <ol style="margin:0 0 10px;padding-left:18px;font-size:12.5px;color:var(--muted);line-height:1.9;">
+        <li><b style="color:var(--ink);">Nama kegiatan</b> ("Rapat evaluasi kinerja Q2")</li>
+        <li><b style="color:var(--ink);">Kapan</b> — tanggal &amp; jam ("hari Kamis 9 Juli 2026 jam 9 pagi", tambahkan "sampai" + tanggal kalau lebih dari 1 hari)</li>
+        <li><b style="color:var(--ink);">Di mana</b> — lokasi atau link online ("di kantor UP3 Selaparang" / "linknya nanti dikirim lewat Zoom")</li>
+        <li><b style="color:var(--ink);">Dari siapa &amp; catatan</b> (opsional) ("dari Manajer UP3, bawa laporan bulanan")</li>
+      </ol>
+      <div class="hint" style="margin-bottom:8px;">Contoh: <i>"Rapat evaluasi kinerja Q2, hari Kamis 9 Juli 2026 jam 9 pagi, di kantor UP3 Selaparang, dari Manajer UP3, bawa laporan bulanan."</i></div>
+      <button type="button" class="link-btn" id="useExampleBtn">Isi contoh ini ke kotak transkrip</button>
+    </div>
+    <button type="button" class="btn-primary" id="micBtn">🎙 Mulai Merekam</button>
+    <div id="voiceUnsupported" class="status-line" style="display:none;margin-top:10px;">[!] Input suara tidak didukung di browser ini. Coba buka lewat Chrome (Android/Desktop).</div>
+    <div class="field" style="margin-top:12px;">
+      <label>Hasil rekaman (bisa disunting sebelum dibaca AI)</label>
+      <textarea id="voiceTranscript" rows="5" placeholder="Transkrip suara akan muncul di sini secara otomatis..."></textarea>
+    </div>
+    <button type="button" class="btn-primary" id="voiceAnalyzeBtn">Baca dengan AI</button>
+    <div id="voiceStatus" style="margin-top:12px;"></div>
+    <div id="voiceResultForm" style="display:none;margin-top:12px;">
+      <div class="field"><label>Judul kegiatan</label><input type="text" id="v-judul" /></div>
+      <div class="field"><label>Kepada / dari siapa</label><input type="text" id="v-kepada" /></div>
+      <div class="row2">
+        <div class="field"><label>Tanggal mulai</label><input type="date" id="v-tanggal" /></div>
+        <div class="field"><label>Waktu</label><input type="time" id="v-waktu" /></div>
+      </div>
+      <div class="field">
+        <label>Tanggal selesai (opsional)</label>
+        <input type="date" id="v-tanggal-selesai" />
+        <div class="hint">Kosongkan kalau kegiatannya cuma 1 hari.</div>
+      </div>
+      <div class="field">
+        <label>Jenis kegiatan</label>
+        <div class="type-toggle">
+          <button type="button" class="active" data-vtype="offline">Offline</button>
+          <button type="button" data-vtype="online">Online</button>
+        </div>
+      </div>
+      <div class="field"><label id="vLokasiLabel">Lokasi</label><input type="text" id="v-lokasi" /></div>
+      <div class="field"><label>Catatan</label><textarea id="v-catatan" rows="2"></textarea></div>
+      <button class="btn-primary" id="voiceSaveBtn">Simpan Kegiatan Ini</button>
     </div>
   </section>
 </main>
@@ -680,6 +732,110 @@ document.getElementById('pasteAnalyzeBtn').addEventListener('click', async ()=>{
 document.getElementById('pasteSaveBtn').addEventListener('click', async ()=>{
   await saveFromForm('p', pasteType, document.getElementById('pasteSaveBtn'), 'pasteResultForm', null, 'pasteStatus');
   document.getElementById('pasteText').value = '';
+});
+
+// ---------- Suara (Web Speech API bawaan browser -- gratis, tanpa API tambahan) ----------
+let voiceType = 'offline';
+let recognition = null;
+let isRecording = false;
+let finalTranscript = '';
+
+function initSpeechRecognition(){
+  const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!Ctor) return null;
+  const r = new Ctor();
+  r.lang = 'id-ID';
+  r.continuous = true;
+  r.interimResults = true;
+  return r;
+}
+
+(function setupVoiceTab(){
+  document.getElementById('useExampleBtn').addEventListener('click', ()=>{
+    document.getElementById('voiceTranscript').value = 'Rapat evaluasi kinerja Q2, hari Kamis 9 Juli 2026 jam 9 pagi, di kantor UP3 Selaparang, dari Manajer UP3, bawa laporan bulanan.';
+  });
+  recognition = initSpeechRecognition();
+  const micBtn = document.getElementById('micBtn');
+  if(!recognition){
+    micBtn.disabled = true;
+    document.getElementById('voiceUnsupported').style.display = 'flex';
+    return;
+  }
+
+  recognition.onstart = ()=>{
+    isRecording = true;
+    micBtn.textContent = 'Berhenti Merekam';
+    micBtn.classList.add('recording');
+  };
+  recognition.onresult = (e)=>{
+    let interim = '';
+    for(let i = e.resultIndex; i < e.results.length; i++){
+      const t = e.results[i][0].transcript;
+      if(e.results[i].isFinal) finalTranscript += t + ' ';
+      else interim += t;
+    }
+    document.getElementById('voiceTranscript').value = (finalTranscript + interim).trim();
+  };
+  recognition.onerror = (e)=>{
+    if(e.error === 'not-allowed' || e.error === 'service-not-allowed'){
+      showToast('Izin mikrofon ditolak. Aktifkan izin mikrofon di browser.');
+    } else if(e.error !== 'no-speech'){
+      showToast('Gagal merekam: ' + e.error);
+    }
+  };
+  recognition.onend = ()=>{
+    isRecording = false;
+    micBtn.textContent = '🎙 Mulai Merekam';
+    micBtn.classList.remove('recording');
+  };
+
+  micBtn.addEventListener('click', ()=>{
+    if(isRecording){ recognition.stop(); return; }
+    finalTranscript = document.getElementById('voiceTranscript').value ? document.getElementById('voiceTranscript').value.trim() + ' ' : '';
+    try{ recognition.start(); }catch(err){ /* sudah jalan, abaikan */ }
+  });
+})();
+
+document.querySelectorAll('.type-toggle button[data-vtype]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.type-toggle button[data-vtype]').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    voiceType = btn.dataset.vtype;
+    document.getElementById('vLokasiLabel').textContent = voiceType === 'online' ? 'Link online' : 'Lokasi';
+  });
+});
+
+document.getElementById('voiceAnalyzeBtn').addEventListener('click', async ()=>{
+  if(isRecording) recognition.stop();
+  const text = document.getElementById('voiceTranscript').value.trim();
+  const statusEl = document.getElementById('voiceStatus');
+  if(!text){
+    statusEl.innerHTML = '<div class="status-line">Rekam dulu suaranya, atau ketik manual di kotak transkrip.</div>';
+    return;
+  }
+  statusEl.innerHTML = '<div class="status-line"><div class="spinner"></div> Membaca hasil rekaman dengan AI...</div>';
+  try{
+    const parsed = await callGemini([
+      { text: EXTRACT_PROMPT + '\\n\\nTeks (hasil rekaman suara, mungkin ada typo pengucapan):\\n' + text }
+    ]);
+    fillResultForm('v', parsed);
+    voiceType = (parsed.tipe === 'online') ? 'online' : 'offline';
+    document.querySelectorAll('.type-toggle button[data-vtype]').forEach(b=>{
+      b.classList.toggle('active', b.dataset.vtype === voiceType);
+    });
+    document.getElementById('vLokasiLabel').textContent = voiceType === 'online' ? 'Link online' : 'Lokasi';
+    statusEl.innerHTML = '<div class="status-line">[OK] Terbaca. Cek &amp; sunting jika perlu, lalu simpan.</div>';
+    document.getElementById('voiceResultForm').style.display = 'block';
+  }catch(err){
+    statusEl.innerHTML = '<div class="status-line">[!] ' + (err.message || 'Gagal membaca otomatis') + '. Isi manual di bawah.</div>';
+    document.getElementById('voiceResultForm').style.display = 'block';
+  }
+});
+
+document.getElementById('voiceSaveBtn').addEventListener('click', async ()=>{
+  await saveFromForm('v', voiceType, document.getElementById('voiceSaveBtn'), 'voiceResultForm', null, 'voiceStatus');
+  document.getElementById('voiceTranscript').value = '';
+  finalTranscript = '';
 });
 
 // ---------- simpan generik (dipakai Scan Foto & Tempel Teks) ----------
