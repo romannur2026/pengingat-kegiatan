@@ -52,6 +52,13 @@
   .badge.h0{background:var(--danger);}
   .badge.ongoing{background:var(--ongoing);}
   .badge.past{background:var(--line);color:var(--muted);}
+  .badge.selesai{background:var(--soon);}
+  .badge.ditunda{background:var(--warn);}
+  .badge.dibatalkan{background:var(--danger);}
+  .filter-tabs{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;}
+  .filter-btn{border:1px solid var(--line);background:var(--surface);color:var(--muted);font-size:12px;font-weight:700;padding:7px 12px;border-radius:999px;cursor:pointer;white-space:nowrap;}
+  .filter-btn.active{background:var(--ink);color:#fff;border-color:var(--ink);}
+  .status-select{font-size:12px;font-weight:700;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink);}
   .card-meta{font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.6;}
   .card-meta div{display:flex;gap:6px;}
   .card-meta b{color:var(--ink);font-weight:600;}
@@ -98,6 +105,12 @@
 
   <!-- LIST -->
   <section class="panel active" id="panel-list">
+    <div class="filter-tabs">
+      <button class="filter-btn active" data-filter="aktif">Aktif</button>
+      <button class="filter-btn" data-filter="selesai">Selesai</button>
+      <button class="filter-btn" data-filter="ditunda">Ditunda</button>
+      <button class="filter-btn" data-filter="dibatalkan">Dibatalkan</button>
+    </div>
     <div id="listContainer"><div class="empty"><span class="bolt"></span>Memuat kegiatan...</div></div>
   </section>
 
@@ -207,6 +220,7 @@
 // "New deployment" baru (URL akan berubah); kalau cuma "New version", tetap sama.
 const SELF_URL = 'https://script.google.com/macros/s/AKfycbyr3ZzuamAR3q1kX7o6A1VaovfNGDOo6fJ2H0lyL-3Zw0nUd81OLhL-fyvpbsnZ6tzu/exec';
 let EVENTS = [];
+let currentFilter = 'aktif';
 let addType = 'offline';
 let scanType = 'offline';
 let pasteType = 'offline';
@@ -235,6 +249,20 @@ async function apiList(){
     return json.data;
   });
   return withTimeout(p, 15000, 'memuat daftar');
+}
+// Ambil daftar berdasarkan status arsip (selesai/ditunda/dibatalkan), tanpa
+// filter tanggal -- dipakai saat tab selain "Aktif" dipilih.
+async function apiListByStatus(status){
+  const p = fetch(SELF_URL + '?action=listStatus&status=' + encodeURIComponent(status)).then(async res => {
+    const json = await res.json();
+    if(!json.ok) throw new Error(json.error || 'Gagal memuat data');
+    return json.data;
+  });
+  return withTimeout(p, 15000, 'memuat daftar');
+}
+async function apiSetStatus(id, status){
+  const p = fetch(SELF_URL + '?action=setStatus&id=' + encodeURIComponent(id) + '&status=' + encodeURIComponent(status)).then(r => r.json());
+  return withTimeout(p, 15000, 'mengubah status');
 }
 async function apiCreate(data){
   const p = fetch(SELF_URL, {
@@ -327,22 +355,33 @@ async function fetchEvents(){
   const container = document.getElementById('listContainer');
   container.innerHTML = '<div class="empty"><span class="bolt"></span>Memuat kegiatan...</div>';
   try{
-    EVENTS = await apiList();
+    EVENTS = (currentFilter === 'aktif') ? await apiList() : await apiListByStatus(currentFilter);
     renderList();
   }catch(e){
     container.innerHTML = '<div class="empty"><span class="bolt">[!]</span>'+ (e.message||'Gagal memuat data') +'</div>';
   }
 }
 
+const EMPTY_MESSAGES = {
+  aktif: 'Belum ada kegiatan aktif.',
+  selesai: 'Belum ada kegiatan yang selesai.',
+  ditunda: 'Belum ada kegiatan yang ditunda.',
+  dibatalkan: 'Belum ada kegiatan yang dibatalkan.'
+};
+
 function renderList(){
   const container = document.getElementById('listContainer');
   if(!EVENTS.length){
-    container.innerHTML = '<div class="empty"><span class="bolt"></span>Belum ada kegiatan aktif.</div>';
+    container.innerHTML = '<div class="empty"><span class="bolt"></span>' + (EMPTY_MESSAGES[currentFilter] || 'Belum ada data.') + '</div>';
     return;
   }
+  // Server sudah mengurutkan (aktif: tanggal terdekat dulu; arsip: sesuai relevansi),
+  // tapi diurutkan ulang di sini juga supaya tetap konsisten kalau data berubah.
   const sorted = [...EVENTS].sort((a,b)=> new Date(a.tanggal) - new Date(b.tanggal));
+  if(currentFilter === 'selesai' || currentFilter === 'dibatalkan') sorted.reverse();
+
   container.innerHTML = sorted.map(ev=>{
-    const status = getEventStatus(ev);
+    const status = (currentFilter === 'aktif') ? getEventStatus(ev) : { code: currentFilter, label: currentFilter.toUpperCase() };
     const lokasiLabel = ev.tipe === 'online' ? 'Link' : 'Lokasi';
     const jamBersih = formatJamBersih(ev.waktu);
     const tglTampil = formatTanggalRange(ev.tanggal, ev.tanggalSelesai);
@@ -362,13 +401,40 @@ function renderList(){
         </div>
         <div class="card-actions">
           <button class="link-btn" onclick="editEvent('${ev.id}')">Edit</button>
-          <button class="link-btn" style="color:var(--soon);" onclick="completeEvent('${ev.id}')">Selesai</button>
+          <select class="status-select" onchange="changeStatus('${ev.id}', this.value)">
+            <option value="">Ubah status...</option>
+            <option value="aktif" ${currentFilter==='aktif'?'disabled':''}>Aktifkan lagi</option>
+            <option value="selesai" ${currentFilter==='selesai'?'disabled':''}>Selesai</option>
+            <option value="ditunda" ${currentFilter==='ditunda'?'disabled':''}>Tunda</option>
+            <option value="dibatalkan" ${currentFilter==='dibatalkan'?'disabled':''}>Batalkan</option>
+          </select>
           <button class="link-btn danger" onclick="removeEvent('${ev.id}')">Hapus</button>
         </div>
       </div>
     </div>`;
   }).join('');
 }
+
+async function changeStatus(id, status){
+  if(!status) return;
+  try{
+    const res = await apiSetStatus(id, status);
+    if(!res.ok) throw new Error(res.message || 'Gagal mengubah status');
+    showToast('Status kegiatan diperbarui');
+    fetchEvents();
+  }catch(e){
+    showToast(e.message || 'Gagal mengubah status');
+  }
+}
+
+document.querySelectorAll('.filter-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFilter = btn.dataset.filter;
+    fetchEvents();
+  });
+});
 
 async function removeEvent(id){
   if(!confirm('Hapus kegiatan ini permanen?')) return;
@@ -378,18 +444,6 @@ async function removeEvent(id){
     fetchEvents();
   }catch(e){
     showToast('Gagal menghapus');
-  }
-}
-
-async function completeEvent(id){
-  if(!confirm('Tandai kegiatan ini sudah selesai? (akan hilang dari daftar)')) return;
-  try{
-    const res = await fetch(SELF_URL + '?action=complete&id=' + encodeURIComponent(id)).then(r => r.json());
-    if(!res.ok) throw new Error(res.message || 'Gagal memproses');
-    showToast('Kegiatan selesai & diarsipkan');
-    fetchEvents();
-  }catch(e){
-    showToast(e.message || 'Gagal mengubah status');
   }
 }
 
